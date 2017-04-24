@@ -511,10 +511,12 @@ int otrl_context_forget(ConnContext *context)
     free(context->accountname);
     free(context->protocol);
     free(context->smstate);
+    free(context->context_priv);
     context->username = NULL;
     context->accountname = NULL;
     context->protocol = NULL;
     context->smstate = NULL;
+    context->context_priv = NULL;
 
     /* Free the application data, if it exists */
     if (context->app_data && context->app_data_free) {

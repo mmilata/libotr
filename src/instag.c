@@ -205,10 +205,7 @@ otrl_instag_t otrl_instag_get_new()
     otrl_instag_t result = 0;
 
     while(result < OTRL_MIN_VALID_INSTAG) {
-	otrl_instag_t * instag = (otrl_instag_t *)gcry_random_bytes(
-		sizeof(otrl_instag_t), GCRY_STRONG_RANDOM);
-	result = *instag;
-	gcry_free(instag);
+	gcry_randomize((unsigned char *) &result, sizeof(result), GCRY_STRONG_RANDOM);
     }
 
     return result;

@@ -76,6 +76,11 @@ static OtrlFragmentPolicy fragPolicy = OTRL_FRAGMENT_SEND_SKIP;
 static const char *protocol = "otr-test";
 static const char *alice_name = "alice";
 static const char *bob_name = "bob";
+/* Some counters to fix a race condition: A message could be sent, then we
+ * decide to quit and the in-flight message is leaked.
+ */
+static int messages_to_alice_inflight = 0;
+static int messages_to_bob_inflight = 0;
 
 static const char *unix_sock_bob_path = "/tmp/otr-test-bob.sock";
 static const char *unix_sock_alice_path = "/tmp/otr-test-alice.sock";
@@ -561,6 +566,7 @@ static int recv_otr_msg(int sock, const char *to, const char *from,
 		if (new_msg) {
 			OK(strncmp(omsg->plaintext, new_msg, omsg->plaintext_len) == 0,
 					"Message exchanged is valid");
+			otrl_message_free(new_msg);
 			update_msg_counter();
 		}
 	} else {
@@ -711,7 +717,7 @@ static void *alice_thread(void *data)
 			fd = ev[i].data.fd;
 			event = ev[i].events;
 
-			if (fd == quit_pipe[0]) {
+			if (fd == quit_pipe[0] && messages_to_alice_inflight == 0) {
 				/* Time to leave. */
 				goto end;
 			} else if (fd == alice_sock) {
@@ -722,6 +728,7 @@ static void *alice_thread(void *data)
 					struct sockaddr_un sun;
 
 					/* Connection from Bob, accept it so we can handle it. */
+					len = sizeof(sun);
 					sock_from_bob = accept(fd, (struct sockaddr *) &sun,
 							&len);
 					ret = add_sock_to_pollset(epfd, sock_from_bob,
@@ -738,6 +745,7 @@ static void *alice_thread(void *data)
 				} else if (event & EPOLLIN) {
 					(void) recv_otr_msg(sock_from_bob, alice_name, bob_name,
 							&oinfo);
+					messages_to_alice_inflight--;
 				}
 				continue;
 			} else {
@@ -821,6 +829,7 @@ static void *bob_thread(void *data)
 
 		/* No event thus timeout, send message to Alice. */
 		if (nb_fd == 0) {
+			messages_to_alice_inflight++;
 			(void) send_otr_msg(sock_to_alice, alice_name, bob_name, &oinfo,
 					NULL);
 			continue;
@@ -833,7 +842,7 @@ static void *bob_thread(void *data)
 			fd = ev[i].data.fd;
 			event = ev[i].events;
 
-			if (fd == quit_pipe[0]) {
+			if (fd == quit_pipe[0] && messages_to_bob_inflight == 0) {
 				/* Time to leave. */
 				goto end;
 			} else if (fd == bob_sock) {
@@ -844,6 +853,7 @@ static void *bob_thread(void *data)
 					struct sockaddr_un sun;
 
 					/* Connection from Alice, accept it so we can handle it. */
+					len = sizeof(sun);
 					sock_from_alice = accept(fd, (struct sockaddr *) &sun,
 							&len);
 					ret = add_sock_to_pollset(epfd, sock_from_alice,
@@ -859,6 +869,7 @@ static void *bob_thread(void *data)
 				} else if (event & EPOLLIN) {
 					(void) recv_otr_msg(sock_from_alice, bob_name,
 							alice_name, &oinfo);
+					messages_to_bob_inflight--;
 				}
 				continue;
 			} else {
@@ -1015,7 +1026,8 @@ static int init_client(void)
 	int ret;
 
 	/* Init libgcrypt threading system. */
-	gcry_control(GCRYCTL_SET_THREAD_CBS, &gcry_threads_pthread);
+	// Docs say this is obsolete since version 1.6
+	//gcry_control(GCRYCTL_SET_THREAD_CBS, &gcry_threads_pthread);
 
 	/* Init OTR library. */
 	OTRL_INIT;
@@ -1150,6 +1162,11 @@ int main(int argc, char **argv)
 	load_key();
 
 	run();
+
+	otrl_userstate_free(user_state);
+	free(opt_instag_path);
+	free(opt_key_path);
+	free(opt_key_fp_path);
 
 	return exit_status();
 
